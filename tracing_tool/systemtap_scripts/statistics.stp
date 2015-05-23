@@ -1,0 +1,45 @@
+#! /usr/bin/env stap
+
+global syscalls_count
+global processes[65536]
+global threads[65536]
+global p_count
+global t_count
+
+probe begin {
+
+	p_count=0
+	t_count=0
+	
+  	print ("Collecting data... Type Ctrl-C to exit and display results\n")
+}
+
+
+probe syscall.* {
+
+  	pid=pid()
+  	if (!target_set_pid(pid)) next;
+  
+  	tid=tid()
+  
+  	syscalls_count[name]++
+  	
+  	if(!(tid in threads)){
+  		threads[tid]=1
+  		t_count++
+  	}
+  	
+  	if(!(pid in processes)){
+  		processes[pid]=1
+  		p_count++
+  	}
+}
+
+
+probe end {
+  	printf ("%s %s\n", "SYSCALL", "COUNT")
+  	foreach (syscall in syscalls_count) {
+  		printf("%s %d\n", syscall, syscalls_count[syscall])
+  	}
+  	printf("processes = %d\nthreads = %d\n", p_count, t_count)
+}

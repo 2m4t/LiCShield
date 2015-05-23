@@ -1,0 +1,49 @@
+Tips/tricks/hints for writing new fixers:
+
+    * Don't write your own PATTERN from scratch; that's what
+      scripts/find_pattern.py is for.
+    
+    * If your fixer works by changing a node's children list or a leaf's value,
+      be sure to call the node/leaf's changed() method. This to be sure the main
+      script will recognize that the tree has changed.
+
+
+Putting 2to3 to work somewhere else:
+
+    * By default, 2to3 uses a merger of Python 2.x and Python 3's grammars.  If
+      you want to support a different grammar, just replace the Grammar.txt file
+      with Grammar/Grammar from your chosen Python version.
+
+    * The real heart of 2to3 is the concrete syntax tree parser in pgen2; this
+      chunk of the system is suitable for a wide range of applications that
+      require CST transformation. All that's required is to rip off the fixer
+      layer and replace it with something else that walks the tree. One
+      application would be a tool to check/enforce style guidelines; this could
+      leverage 90% of the existing infrastructure with primarily cosmetic
+      changes (e.g., fixes/fix_*.py -> styles/style_*.py).
+
+
+TODO
+
+    Simple:
+    #######
+    
+    * Refactor common code out of fixes/fix_*.py into fixer_util (on-going).
+
+    * Document how to write fixers.
+
+
+    Complex:
+    ########
+
+    * Come up with a scheme to hide the details of suite indentation (some kind
+      of custom pytree node for suites, probably). This will automatically
+      reindent all code with spaces, tied into a refactor.py flag that allows
+      you to specify the indent level.
+
+    * Remove the need to explicitly assign a node's parent attribute.  This
+      could be gone with a magic children list.
+
+    * Import statements are complicated and a pain to handle, and there are many
+      fixers that manipulate them. It would be nice to have a little API for
+      manipulating imports in fixers.

@@ -1,0 +1,7 @@
+This is 2to3, r72994 from http://svn.python.org/projects/sandbox/trunk/2to3.
+
+Local modifications:
+- Deleted lib2to3/tests/data/different_encoding.py because it would kill 2to3
+  on some (all?) Linux systems. Also delete a test that depends on this file.
+  This can be restored once http://bugs.python.org/issue5093 is resolved
+  upstream.

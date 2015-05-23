@@ -1,0 +1,621 @@
+%{
+#include <linux/file.h>
+#include <linux/fs.h>
+#include <linux/cgroup.h>
+#include <linux/fs_struct.h>
+#include <linux/stat.h>
+#include <linux/namei.h>
+#include <linux/slab.h>
+#include <linux/path.h>
+#include <linux/string.h>
+#include <linux/magic.h>
+#include <linux/mount.h>
+#include <linux/seq_file.h>
+#include <linux/poll.h>
+
+// from fs/mount.h
+
+struct mnt_namespace {
+    atomic_t                count;
+    unsigned int            proc_inum;
+    struct mount *root;
+    struct list_head        list;
+    struct user_namespace   *user_ns;
+    u64                     seq;    /* Sequence number to prevent loops */
+    wait_queue_head_t poll;
+    int event;
+};
+
+struct mnt_pcp {
+    int mnt_count;
+    int mnt_writers;
+};
+
+struct mountpoint {
+    struct list_head m_hash;
+    struct dentry *m_dentry;
+    int m_count;
+};
+
+struct mount {
+    struct list_head mnt_hash;
+    struct mount *mnt_parent;
+    struct dentry *mnt_mountpoint;
+    struct vfsmount mnt;
+    struct rcu_head mnt_rcu;
+#ifdef CONFIG_SMP
+    struct mnt_pcp __percpu *mnt_pcp;
+#else
+    int mnt_count;
+    int mnt_writers;
+#endif
+    struct list_head mnt_mounts;    /* list of children, anchored here */
+    struct list_head mnt_child;     /* and going through their mnt_child */
+    struct list_head mnt_instance;  /* mount instance on sb->s_mounts */
+    const char *mnt_devname;        /* Name of device e.g. /dev/dsk/hda1 */
+    struct list_head mnt_list;
+    struct list_head mnt_expire;    /* link in fs-specific expiry list */
+    struct list_head mnt_share;     /* circular list of shared mounts */
+    struct list_head mnt_slave_list;/* list of slave mounts */
+    struct list_head mnt_slave;     /* slave list entry */
+    struct mount *mnt_master;       /* slave is on master->mnt_slave_list */
+    struct mnt_namespace *mnt_ns;   /* containing namespace */
+    struct mountpoint *mnt_mp;      /* where is it mounted */
+#ifdef CONFIG_FSNOTIFY
+    struct hlist_head mnt_fsnotify_marks;
+    __u32 mnt_fsnotify_mask;
+#endif
+    int mnt_id;                     /* mount identifier */
+    int mnt_group_id;               /* peer group identifier */
+    int mnt_expiry_mark;            /* true if marked for expiry */
+    int mnt_pinned;
+    struct path mnt_ex_mountpoint;
+};
+
+static inline struct mount *real_mount(struct vfsmount *mnt) {
+    return container_of(mnt, struct mount, mnt);
+}
+
+// from fs/dcache.c
+
+static int prepend_name(char **buffer, int *buflen, struct qstr *name) {
+	const char *dname = ACCESS_ONCE(name->name);
+	u32 dlen = ACCESS_ONCE(name->len);
+	char *p;
+
+	if (*buflen < dlen + 1)
+	{
+		return -ENAMETOOLONG; /* File name too long */
+	}
+
+	*buflen -= dlen + 1;
+	p = *buffer -= dlen + 1;
+	*p++ = '/';
+	while (dlen--) 
+	{
+		char c = *dname++;
+		if (!c)
+			break;
+		*p++ = c;
+	}
+	return 0;
+}
+
+static int resolve_dentry_path(struct dentry *dentry, char **buffer, int *buflen) {
+	char *bptr;
+	int blen;
+	int error = 0;
+
+	blen = *buflen - 1;
+	bptr = *buffer + blen;
+	*bptr = '\0';
+
+	rcu_read_lock();
+	while (!IS_ROOT(dentry)) 
+	{
+		struct dentry *parent;
+
+		parent = dentry->d_parent;
+		prefetch(parent);
+
+		error = prepend_name(&bptr, &blen, &dentry->d_name);
+
+		if (error)
+		{
+			printk(KERN_ALERT "resolve_dentry_path failed: path too long\n");
+			break;
+		}
+
+		dentry = parent;
+	}
+	rcu_read_unlock();
+
+	*buflen = blen;
+	*buffer = bptr;
+	return error;
+}
+
+static int resolve_path(struct dentry *dentry, struct vfsmount *vfsmnt, char **buffer, int *buflen) {
+	char *bptr;
+	int blen;
+	int error = 0;
+	struct mount *mnt = real_mount(vfsmnt);
+	blen = *buflen - 1;
+	bptr = *buffer + blen;
+	*bptr = '\0';
+
+	rcu_read_lock();
+	for(;;)
+	{
+		struct dentry *parent;
+
+		if (dentry == vfsmnt->mnt_root || IS_ROOT(dentry)) 
+		{
+			struct mount *mnt_parent = ACCESS_ONCE(mnt->mnt_parent);
+			/* Global root? */
+			if(mnt != mnt_parent)
+			{
+				dentry = ACCESS_ONCE(mnt->mnt_mountpoint);
+				mnt = mnt_parent;
+				vfsmnt = &mnt->mnt;
+				continue;
+			}
+
+			break;
+		}
+		
+		parent = dentry->d_parent;
+		prefetch(parent);
+
+		error = prepend_name(&bptr, &blen, &dentry->d_name);
+
+		if (error)
+		{
+			printk(KERN_ALERT "resolve_path failed: path too long\n");
+			break;
+		}
+
+		dentry = parent;
+	}
+	rcu_read_unlock();
+
+	*buffer = bptr;
+	*buflen = blen;
+	return error;
+}
+
+#define FILE 0
+#define DENTRY 1
+#define PATH 2
+
+static int get_path (void *pointer1, void *pointer2, int type, char *output_path) {
+	struct vfsmount *vfsmnt = NULL;
+	struct dentry *dentry = NULL;
+	char *buffer = NULL;
+	char *path = NULL;
+	struct path f_path;
+	int error;
+	int buflen;
+
+	if(pointer2 == NULL)
+	{
+		return -1;
+	}
+
+	switch(type)
+	{
+		case FILE:
+			f_path = ((struct file *)pointer2)->f_path;
+			dentry = f_path.dentry;
+			vfsmnt = f_path.mnt;
+			break;
+		case DENTRY:
+			dentry = (struct dentry *)pointer2;
+			vfsmnt = (struct vfsmount *)pointer1;
+			break;
+		case PATH:
+			f_path = *((struct path *)pointer2);
+			dentry = f_path.dentry;
+			vfsmnt = f_path.mnt;
+			break;
+	}
+    if(dentry && vfsmnt)
+    {
+    	buflen = PATH_MAX;
+		buffer = (char *)kmalloc(buflen, GFP_ATOMIC);
+		if(buffer)
+		{
+	    	char *last_char = (dentry->d_inode && S_ISDIR(dentry->d_inode->i_mode))? "/" : "";
+		    if (vfsmnt->mnt_flags & MNT_INTERNAL) 
+		    {
+				/* it is not mounted anywhere */
+				path = buffer;
+				error = resolve_dentry_path(dentry, &path, &buflen);
+				if (error)
+				{
+					kfree(buffer);
+					return error;
+				}
+
+				if (dentry->d_sb && (dentry->d_sb->s_magic == PROC_SUPER_MAGIC) &&
+					strncmp(path, "/sys/", 5) == 0) 
+				{
+					snprintf(output_path, MAXSTRINGLEN, "/proc%s%s", path, last_char);
+				}else
+				{
+					snprintf(output_path, MAXSTRINGLEN, "%s%s", path, last_char);
+				}
+			}else
+			{
+			    path = buffer;
+			    error = resolve_path(dentry, vfsmnt, &path, &buflen);
+				if (error)
+				{
+					kfree(buffer);
+					return error;
+				}
+				snprintf(output_path, MAXSTRINGLEN, "%s%s", path, last_char);
+			}
+			kfree(buffer);
+			return 0;
+		}
+	}
+	return -1;
+}
+
+%}
+
+function get_path_wrapper:string (pointer1:long, pointer2:long, type:long) %{ /* pure */
+	int error = get_path((void *)STAP_ARG_pointer1, (void *)STAP_ARG_pointer2, (int)STAP_ARG_type, (char *)STAP_RETVALUE);
+	if(error)
+		STAP_RETVALUE[0] = '\0';
+%}
+
+function task_executable_path:string (task:long) %{ /* pure */
+	struct task_struct *p = (struct task_struct *) STAP_ARG_task;
+	struct mm_struct *mm = p->mm;
+	
+	if(mm)
+	{
+		if (mm->exe_file) 
+		{
+			int error = get_path(NULL, (void *)mm->exe_file, FILE, (char *)STAP_RETVALUE);
+	        if(error)
+	        {
+				STAP_RETVALUE[0] = '\0';
+	        }
+		} 
+	}
+%}
+
+function task_control_group:string (task:long) %{ /* pure */
+	struct task_struct *p = (struct task_struct *) STAP_ARG_task;
+	char *cgroup = (char *)kmalloc(PATH_MAX, GFP_ATOMIC);
+
+	if (cgroup)
+	{ 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3,15,0)
+		if(task_cgroup_path(p, cgroup, MAXSTRINGLEN) == 0) 
+		{
+			snprintf(STAP_RETVALUE, MAXSTRINGLEN, "%s", cgroup);
+		}
+		kfree(cgroup);
+#else 
+		char *buffer = cgroup;
+		if((cgroup = task_cgroup_path(p, buffer, MAXSTRINGLEN))) 
+		{
+			snprintf(STAP_RETVALUE, MAXSTRINGLEN, "%s", cgroup);
+		}
+		kfree(buffer);
+#endif
+	}
+%}
+
+function is_mode_dir:long (mode:long) %{ /* pure */
+	int mode = (int) STAP_ARG_mode;
+	STAP_RETVALUE = S_ISDIR(mode);
+%}
+
+function is_dentry_dir:long (dentry:long) %{ /* pure */
+	struct dentry *dentry = (struct dentry *) STAP_ARG_dentry;
+	STAP_RETVALUE = (dentry && dentry->d_inode && S_ISDIR(dentry->d_inode->i_mode));
+%}
+
+// to force page fault resolution
+function defer_pointer:string (pointer:long) %{ /* pure */
+	snprintf(STAP_RETVALUE, MAXSTRINGLEN, "%s", ((char *)STAP_ARG_pointer));
+%}
+
+/* PRINT FUNCTIONS */
+
+/* functions path argument */
+global path_arg
+
+function print_preamble(name)
+{
+	task = task_current()
+	executable_path = task_executable_path(task)
+	cgroup = task_control_group(task)
+	update_root()
+
+	printf("%s %s {%s}", name, cgroup, executable_path)	
+}
+
+function print_path(name)
+{
+	tid = tid()
+
+	if(path_arg[tid] != "")
+	{
+		print_preamble(name)
+		printf(" {%s} {%s}\n", path_arg[tid], mount_namespaces_roots[pid()])	
+	}	
+
+	delete path_arg[tid]
+}
+
+/* tracks the namespace root directory */
+global mount_namespaces_roots
+
+/* update mount_namespaces_roots */
+function update_root()
+{
+	pid = pid()
+
+	if (!([pid] in mount_namespaces_roots)) {
+		mount_namespaces_roots[pid] = mount_namespaces_roots[ppid()]
+	}
+}
+
+/* initialize mount_namespaces_roots */
+probe 	begin {
+	mount_namespaces_roots[target()] = "/"
+}
+
+probe 	kernel.function("security_file_lock").return
+{
+    /* skip if process is not in the target tree */
+    if (!target_set_pid(pid())) next;
+
+	path_arg[tid()] = get_path_wrapper(NULL, $file, %{ FILE %})
+
+    print_path(ppfunc())
+}
+
+probe 	kernel.function("security_path_link").return
+{
+	pid = pid()
+	/* skip if process is not in the target tree */
+    if (!target_set_pid(pid)) next;
+
+	old_path = get_path_wrapper($new_dir->mnt, $old_dentry, %{ DENTRY %})
+    path = get_path_wrapper($new_dir->mnt, $new_dentry, %{ DENTRY %})
+
+    if(old_path == "" || path == "") next;
+
+	print_preamble(ppfunc())
+	printf(" {%s} {%s} {%s}\n", old_path, path, mount_namespaces_roots[pid])	
+}
+
+probe 	kernel.function("security_path_rename").return
+{
+	pid = pid()
+	/* skip if process is not in the target tree */
+    if (!target_set_pid(pid)) next;
+
+	old_path = get_path_wrapper($old_dir->mnt, $old_dentry, %{ DENTRY %})
+    path = get_path_wrapper($new_dir->mnt, $new_dentry, %{ DENTRY %})
+
+    if(old_path == "" || path == "") next;
+
+	if(is_dentry_dir($old_dentry))
+		path = sprintf("%s/", path)
+
+	print_preamble(ppfunc())
+	printf(" {%s} {%s} {%s}\n", old_path, path, mount_namespaces_roots[pid])	
+}
+
+probe	kernel.function("security_path_unlink"),
+		kernel.function("security_path_rmdir"),
+		kernel.function("security_path_symlink")
+{
+	/* skip if process is not in the target tree */
+    if (!target_set_pid(pid())) next;
+
+    path_arg[tid()] = get_path_wrapper($dir->mnt, $dentry, %{ DENTRY %})
+    print_path(ppfunc())
+}
+
+probe	kernel.function("security_path_mknod")
+{
+	/* skip if process is not in the target tree */
+    if (!target_set_pid(pid())) next;
+
+    path = get_path_wrapper($dir->mnt, $dentry, %{ DENTRY %})
+
+    if(is_mode_dir($mode))
+    {
+    	path_arg[tid()] = sprintf("%s/", path)
+    }else
+    {
+    	path_arg[tid()] = path
+    }
+    print_path(ppfunc())
+}
+
+probe	kernel.function("security_path_mkdir")
+{
+	/* skip if process is not in the target tree */
+    if (!target_set_pid(pid())) next;
+
+    path_arg[tid()] = sprintf("%s/", get_path_wrapper($dir->mnt, $dentry, %{ DENTRY %}))
+    print_path(ppfunc())
+}
+
+probe	kernel.function("security_sb_pivotroot")
+{
+	pid = pid()
+	/* skip if process is not in the target tree */
+    if (!target_set_pid(pid)) next;
+
+    old_root = get_path_wrapper(NULL, $old_path, %{ PATH %})
+    new_root = get_path_wrapper(NULL, $new_path, %{ PATH %})
+
+    if(old_root == "" || new_root == "") next;
+
+	print_preamble(ppfunc())
+	printf(" {%s} {%s} {%s}\n", old_root, new_root, mount_namespaces_roots[pid])
+
+	/* change the namespace root directory for the current task */
+	mount_namespaces_roots[pid] = new_root
+}
+
+probe 	kernel.function("security_path_truncate"),
+		kernel.function("security_path_chmod"),
+		kernel.function("security_path_chown"),
+		kernel.function("security_path_chroot")
+{
+	/* skip if process is not in the target tree */
+    if (!target_set_pid(pid())) next;
+
+    path_arg[tid()] = get_path_wrapper(NULL, $path, %{ PATH %})
+
+    print_path(ppfunc())
+}
+
+probe	kernel.function("security_mmap_file")
+{
+	/* skip if process is not in the target tree */
+    if (!target_set_pid(pid())) next;
+
+    path = get_path_wrapper(NULL, $file, %{ FILE %})
+
+	if(path == "") next;
+
+	print_preamble(ppfunc())
+	printf(" %d {%s} {%s}\n", $prot, path, mount_namespaces_roots[pid()])
+}
+
+probe	kernel.function("security_file_mprotect")
+{
+	/* skip if process is not in the target tree */
+    if (!target_set_pid(pid())) next;
+
+    path = get_path_wrapper(NULL, $vma->vm_file, %{ FILE %})
+
+	if(path == "") next;
+
+	print_preamble(ppfunc())
+	printf(" %d {%s} {%s}\n", $prot, path, mount_namespaces_roots[pid()])
+}
+
+probe 	kernel.function("security_file_open")
+{
+    /* skip if process is not in the target tree */
+    if (!target_set_pid(pid())) next;
+
+    path = get_path_wrapper(NULL, $file, %{ FILE %})
+
+	if(path == "") next;
+
+	print_preamble(ppfunc())
+	printf(" %d {%s} {%s}\n", $file->f_flags, path, mount_namespaces_roots[pid()])
+}
+
+/* MOUNT */
+
+global mount_source
+global mount_target
+global mount_type
+global mount_flags
+
+probe 	kernel.function("do_mount")
+{
+    /* skip if process is not in the target tree */
+    if (!target_set_pid(pid())) next;
+
+    tid = tid()
+    mount_source[tid] = defer_pointer($dev_name)
+    mount_type[tid] = defer_pointer($type_page)
+    mount_flags[tid] = $flags
+}
+
+/* in case of do_loopback and do_move_mount the dev_name is resolved like a normal path
+   so you need to clear mount_source[tid] to get its real value from the kern_path function
+*/
+probe 	kernel.function("do_loopback"),
+	 	kernel.function("do_move_mount")
+{
+	tid = tid()
+    if (!([tid] in mount_flags)) next;
+    
+	delete mount_source[tid]
+}
+
+probe 	kernel.function("kern_path").return
+{
+	tid = tid()
+    
+    if ([tid] in mount_flags)
+    {
+	    if(!([tid] in mount_target))
+	    {
+	    	mount_target[tid] = get_path_wrapper(NULL, $path, %{ PATH %})
+	    }
+	    else if(!([tid] in mount_source))
+		{
+			mount_source[tid] = get_path_wrapper(NULL, $path, %{ PATH %})
+		}
+	}
+}
+
+probe 	kernel.function("do_mount").return
+{
+	pid = pid()
+    /* skip if process is not in the target tree */
+    if (!target_set_pid(pid)) next;
+
+    tid = tid()
+
+    if(mount_target[tid] != "")
+    {
+		print_preamble(ppfunc())
+		printf(" {%s} {%s} {%s} {%d} {%s}\n", 
+			mount_source[tid], mount_target[tid], 
+			mount_type[tid], mount_flags[tid], 
+			mount_namespaces_roots[pid])
+	}
+
+	delete mount_source[tid]
+	delete mount_target[tid]
+	delete mount_type[tid]
+	delete mount_flags[tid]
+}
+
+probe 	syscall.clone,
+		syscall.fork, 
+		syscall.vfork
+{
+    /* skip if process is not in the target tree */
+    if (!target_set_pid(pid())) next;
+
+	update_root()
+}
+
+probe 	syscall.exit
+{ 
+    /* skip if process is not in the target tree */
+    if (!target_set_pid(pid())) next;
+
+	delete path_arg[tid()]
+}
+
+probe 	syscall.exit_group
+{ 
+	pid = pid()
+    /* skip if process is not in the target tree */
+    if (!target_set_pid(pid)) next;
+
+    delete mount_namespaces_roots[pid]
+	delete path_arg[tid()]
+}
