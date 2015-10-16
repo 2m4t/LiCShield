@@ -39,7 +39,7 @@ fi
 
 stop_docker
 
-period=300
+period=30
 
 echo -e "\nSTART RUNNING CONTAINER $tag (for $period s)"
 

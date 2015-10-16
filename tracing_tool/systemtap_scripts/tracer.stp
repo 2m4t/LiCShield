@@ -109,11 +109,12 @@ static int resolve_dentry_path(struct dentry *dentry, char **buffer, int *buflen
 	blen = *buflen - 1;
 	bptr = *buffer + blen;
 	*bptr = '\0';
-
+	
 	rcu_read_lock();
 	while (!IS_ROOT(dentry)) 
 	{
 		struct dentry *parent;
+
 
 		parent = dentry->d_parent;
 		prefetch(parent);
@@ -122,7 +123,7 @@ static int resolve_dentry_path(struct dentry *dentry, char **buffer, int *buflen
 
 		if (error)
 		{
-			printk(KERN_ALERT "resolve_dentry_path failed: path too long\n");
+			printk(KERN_ALERT "resolve_dentry_path failed: path too long %s + %s\n", bptr, dentry->d_name.name);
 			break;
 		}
 
@@ -148,7 +149,6 @@ static int resolve_path(struct dentry *dentry, struct vfsmount *vfsmnt, char **b
 	for(;;)
 	{
 		struct dentry *parent;
-
 		if (dentry == vfsmnt->mnt_root || IS_ROOT(dentry)) 
 		{
 			struct mount *mnt_parent = ACCESS_ONCE(mnt->mnt_parent);
@@ -171,7 +171,7 @@ static int resolve_path(struct dentry *dentry, struct vfsmount *vfsmnt, char **b
 
 		if (error)
 		{
-			printk(KERN_ALERT "resolve_path failed: path too long\n");
+			printk(KERN_ALERT "resolve_path failed: path too long %s + %s\n", bptr, dentry->d_name.name);
 			break;
 		}
 
@@ -221,7 +221,7 @@ static int get_path (void *pointer1, void *pointer2, int type, char *output_path
 	}
     if(dentry && vfsmnt)
     {
-    	buflen = PATH_MAX;
+    	buflen = MAXSTRINGLEN;
 		buffer = (char *)kmalloc(buflen, GFP_ATOMIC);
 		if(buffer)
 		{
@@ -290,7 +290,7 @@ function task_executable_path:string (task:long) %{ /* pure */
 
 function task_control_group:string (task:long) %{ /* pure */
 	struct task_struct *p = (struct task_struct *) STAP_ARG_task;
-	char *cgroup = (char *)kmalloc(PATH_MAX, GFP_ATOMIC);
+	char *cgroup = (char *)kmalloc(MAXSTRINGLEN, GFP_ATOMIC);
 
 	if (cgroup)
 	{ 

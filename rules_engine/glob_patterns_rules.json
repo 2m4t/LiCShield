@@ -25,7 +25,7 @@
 							   "/\\.wh\\.\\.wh\\..+/.+":"/.wh..wh.*/**"
 						   	},
 	"container_id":"[a-z0-9]{64}",
-	"container_root":"/var/lib/docker/aufs/diff/*",
+	"container_root":"/var/lib/docker/aufs/diff/",
 	"container_home":"/var/lib/docker",
 	"container_full_access_paths":["/tmp/", "/root/", "/data/", "/usr/src/", "/var/lib/mysql/", "/dev/shm/",
 					               "/etc/ssl/", "/etc/apt/", "/etc/mysql/", "/etc/postgresql-common/",

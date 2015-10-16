@@ -7,12 +7,18 @@ import re
 import json
 import os
 
+class Glob_Patterns():
+    def __init__(self, glob_dict):
+        self.__dict__ = glob_dict
+
+
 glob_patterns = None
 if not glob_patterns:
     rule_engine_dir = os.path.dirname(os.path.realpath(__file__))
     with open(rule_engine_dir + "/glob_patterns_rules.json") as gb_file:
-        glob_patterns = json.load(gb_file)
-
+        glob_dict = json.load(gb_file)
+    glob_patterns = Glob_Patterns(glob_dict)
+    
 EXEC_PERMISSION = "ix"
 
 MS_REC = 16384
@@ -33,39 +39,30 @@ def get_layer(cgorup):
 
 
 def replace_container_id(path):
-    return re.sub(glob_patterns["container_id"], "*", path)
+    return re.sub(glob_patterns.container_id, "*", path)
 
 
 def glob_paths(path):
     path = replace_container_id(path)
-    for (regex, sub_value) in glob_patterns["glob_patterns_regex"].iteritems():
+    for (regex, sub_value) in glob_patterns.glob_patterns_regex.iteritems():
         path = re.sub(regex, sub_value, path)
     return path
-  
-  
-def glob_container_build_paths(path):
-    return glob_container_paths(path, glob_patterns["container_build_full_access_paths"])
 
 
-def glob_container_paths(path, cmd): 
-    full_access_paths = glob_patterns["container_full_access_paths"]
+def glob_container_paths(path, cmd):
+    full_access_paths = glob_patterns.container_full_access_paths
     if cmd == "build":
-        full_access_paths += glob_patterns["container_build_full_access_paths"]
-    container_root = glob_patterns["container_root"]
-    sub_path = path.replace(container_root, "")
-    for container_path in full_access_paths:
-        if (sub_path.startswith(container_path) and sub_path != container_path):
-            if(path.startswith(container_root)):
-                return container_root + container_path + "**"
-            else:
+        full_access_paths += glob_patterns.container_build_full_access_paths
+    
+    if (path.startswith(glob_patterns.container_root)):
+        for container_path in full_access_paths:
+            if re.match(glob_patterns.container_root + "\*"  + container_path + ".+", path):
+                return glob_patterns.container_root + "*" + container_path + "**"
+    else:
+        for container_path in full_access_paths:
+            if re.match(container_path + ".+", path):
                 return container_path + "**"
     return path
-
-
-def glob_space(path):
-    if(re.findall("[ \t]", path)):
-        return '"%s"' % path
-    return path  
 
 
 def open_permission_rule(args):
@@ -99,7 +96,7 @@ def open_permission_rule(args):
 
 def memory_map_permission_rule(args):
     square_args = re.findall("\{(.*?)\}", args)
-    path = re.sub("[a-z0-9]{64}", "*", square_args[0])
+    path = replace_container_id(square_args[0])
     return ((path, "m"), square_args[-1]) 
  
         

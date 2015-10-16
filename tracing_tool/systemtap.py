@@ -19,7 +19,7 @@ class Systemtap(object):
     def __init__(self, trace_file):
         
         self._trace_file = trace_file
-        self._cmd = [STAP, "-g", SYSTEMTAP_SCRIPT, "-v", "-c", DOCKER_DAEMON, "-o", trace_file]              
+        self._cmd = [STAP, "-g", SYSTEMTAP_SCRIPT, "-DSTP_NO_OVERLOAD", "-DMAXSTRINGLEN=4096", "-v", "-c", DOCKER_DAEMON, "-o", trace_file]              
     
     def run(self):
         
