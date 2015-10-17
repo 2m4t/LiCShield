@@ -3,6 +3,7 @@ LiCShield is an open source project to harden the Linux systems running the [Doc
 
 The [SystemTap](https://sourceware.org/systemtap/) tracing tool has to be installed in the system to use this software.
 
+LiCShield relies on the [Python API client library](https://github.com/docker/docker-py) to interact with the Docker daemon. Therefore, make sure you have installed on your system this library.
 
 # How it works
 LiCShield generates [AppArmor](http://wiki.apparmor.net/index.php/Main_Page) profiles by tracing the Docker daemon during the execution of the *build* and *run* commands.
