@@ -1,0 +1,16 @@
+$ wget https://sourceware.org/systemtap/ftp/releases/systemtap-2.9.tar.gz
+$ tar xvzf systemtap-2.9.tar.gz
+$ cd systemtap-2.9
+$ ./configure
+$ sudo apt-get install build-essential
+$ sudo apt-get install gettext
+$ sudo apt-get install elfutils
+$ sudo apt-get install libdw-dev
+$ ./configure
+$ make
+$ sudo make install
+$ stap --version
+Systemtap translator/driver (version 2.9/0.158, non-git sources)
+Copyright (C) 2005-2015 Red Hat, Inc. and others
+This is free software; see the source for copying conditions.
+enabled features: NLS TR1_UNORDERED_MAP
