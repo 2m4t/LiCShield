@@ -1,11 +1,10 @@
-$ wget https://sourceware.org/systemtap/ftp/releases/systemtap-2.9.tar.gz
-$ tar xvzf systemtap-2.9.tar.gz
-$ cd systemtap-2.9
-$ ./configure
 $ sudo apt-get install build-essential
 $ sudo apt-get install gettext
 $ sudo apt-get install elfutils
 $ sudo apt-get install libdw-dev
+$ wget https://sourceware.org/systemtap/ftp/releases/systemtap-2.9.tar.gz
+$ tar xvzf systemtap-2.9.tar.gz
+$ cd systemtap-2.9
 $ ./configure
 $ make
 $ sudo make install
