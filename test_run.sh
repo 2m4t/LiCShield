@@ -57,7 +57,7 @@ if [ $image_name == "nginx" -o $image_name == "php" -o $image_name == "nodejs" ]
 	"$script_dir/httperf_workload.sh" $image_name &
 fi
 
-period=30 # 5 minutes
+period=300 # 5 minutes
 
 start_docker
 
