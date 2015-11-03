@@ -3,8 +3,13 @@
 httperf -v >/dev/null 2>&1
 
 if [ $? -ne 0 ]; then
-	echo -e "httperf is not installed in the system.\nNo workload will be generated for the test.\n"
-	exit 1
+	echo -e "httperf is not installed in the system.\nIt is going to be installed right now.\n"
+	apt-get install -y httperf
+	if [ $? -ne 0 ]; then
+		echo -e "A problem occoured during the httperf installation.\n"
+		exit 1
+	fi
+	echo -e "httperf has been installed correctly.\n"
 fi
 
 echo -e "\nWaiting server start-up before to run httperf benchmark"
