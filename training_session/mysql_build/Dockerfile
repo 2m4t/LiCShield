@@ -19,7 +19,7 @@ COPY mysql.gpg /mysql.gpg
 RUN apt-key add /mysql.gpg && rm /mysql.gpg
 
 ENV MYSQL_MAJOR 5.6
-ENV MYSQL_VERSION 5.6.25
+ENV MYSQL_VERSION 5.6.27-1debian7
 
 RUN echo "deb http://repo.mysql.com/apt/debian/ wheezy mysql-${MYSQL_MAJOR}" > /etc/apt/sources.list.d/mysql.list
 

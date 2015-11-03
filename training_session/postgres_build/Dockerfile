@@ -32,7 +32,7 @@ COPY postgres2.gpg /
 RUN apt-key add /postgres2.gpg && rm /postgres2.gpg
 
 ENV PG_MAJOR 9.4
-ENV PG_VERSION 9.4.3-1.pgdg70+1
+ENV PG_VERSION 9.4.5-1.pgdg70+1
 
 RUN echo 'deb http://apt.postgresql.org/pub/repos/apt/ wheezy-pgdg main' $PG_MAJOR > /etc/apt/sources.list.d/pgdg.list
 
