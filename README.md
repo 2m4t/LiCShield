@@ -10,7 +10,7 @@ LiCShield has been tested with a modified version of Docker running without any 
 # How it works
 LiCShield generates [AppArmor](http://wiki.apparmor.net/index.php/Main_Page) profiles by tracing the Docker daemon during the execution of the *build* and *run* commands.
 
-To trace the build of a Docker image it is necessary to deploy the relative Dockerfile in a directory whose name must end with *_build*. Then, running the **start_build.sh** script with root credentials and specifing the path to the Dockerfile, the build operation will be executed and the trace file will be stored under the path *$HOME/results*.
-In the same directory of the trace file it can be found the AppArmor profiles for the Docker daemon and for the container processes. To test these profiles is available the **test_build.sh** script which executes again the build of the image enforcing the two AppArmor profiles and skipping the tracing phase.
+To trace the build of a Docker image it is necessary to deploy the relative Dockerfile in a directory whose name must end with *_build*. The **start_build.sh** script, executed with root credentials and specifing the path to the Dockerfile, builds the image and generates a trace file under the path *$HOME/results*.
+In the same directory of the trace file it can be found the AppArmor profiles for the Docker daemon and for the container processes. To test these profiles is available the **test_build.sh** script which executes again the build of the image, but this time enforcing the two AppArmor profiles and skipping the tracing phase.
 
 As well as for the build also for the run operation are available a couple of scripts to generate and test AppArmor profiles. The names of these script end with *_run.sh* instead of *_build.sh*.
